@@ -34,12 +34,6 @@ umount $SQUASH_MNT
 DIR=`mktemp -d`
 
 function cleanup {
-    umount $ROOT_MNT
-    umount $BOOT_MNT
-
-    # Unhook img
-    losetup -d $DEVICE
-
     if [ -d "$DIR" ]
     then
         rm -rf "$DIR"
@@ -120,6 +114,14 @@ if [ -f $CONFIG ]
 then
     tar xf $CONFIG -C $ROOT_MNT/w
 fi
+
+# These need to happen before the gzip, or else the changes won't be
+# written to disk
+umount $ROOT_MNT
+umount $BOOT_MNT
+
+# Unhook img
+losetup -d $DEVICE
 
 echo "Compressing image."
 gzip -9 $IMG
