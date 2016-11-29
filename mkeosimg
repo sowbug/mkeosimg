@@ -1,0 +1,104 @@
+#!/bin/bash
+
+if [ "$EUID" -ne 0 ]
+then
+    echo "Must run as root or with sudo."
+    exit 1
+fi
+
+TARBALL=${1}
+DEVICE=`losetup -f`
+DEVICE_BOOT=${DEVICE}p1
+DEVICE_ROOT=${DEVICE}p2
+
+BOOT_MNT=/mnt/boot
+ROOT_MNT=/mnt/root
+
+if [[ -z "$TARBALL" ]]
+then
+    echo "Usage: mkeosimg system_image_tarball"
+    exit 1
+fi
+
+mkdir -p $BOOT_MNT
+mkdir -p $ROOT_MNT
+
+umount $BOOT_MNT
+umount $ROOT_MNT
+
+DIR=`mktemp -d`
+
+function cleanup {
+    if [ -d "$DIR" ]
+    then
+        rm -rf "$DIR"
+    fi
+    if [ -d "$BOOT_MNT" ]
+    then
+        rm -rf "$BOOT_MNT"
+    fi
+    if [ -d "$ROOT_MNT" ]
+    then
+        rm -rf "$ROOT_MNT"
+    fi
+}
+trap cleanup EXIT
+
+IMG=${TARBALL%.tar}.img
+rm -f $IMG.gz
+
+echo "Creating $IMG"
+dd if=/dev/zero of=$IMG bs=1M count=2048
+losetup $DEVICE $IMG
+parted --script $DEVICE mktable msdos
+parted --script $DEVICE mkpart primary fat32 1 150MB
+parted --script $DEVICE mkpart primary ext3 150MB 1900MB
+
+echo "Formatting $IMG"
+mkfs.vfat $DEVICE_BOOT
+mkfs.ext3 -q $DEVICE_ROOT
+
+mount $DEVICE_BOOT $BOOT_MNT
+mount $DEVICE_ROOT $ROOT_MNT
+
+echo "Unpacking EdgeOS release image"
+tar xf $TARBALL -C $DIR
+
+# The kernel
+echo "Verifying EdgeOS kernel"
+if [ `md5sum $DIR/vmlinux.tmp | awk -F ' ' '{print $1}'` != `cat $DIR/vmlinux.tmp.md5` ]; then
+    echo "Kernel in image is corrupted! Check your image and start over."
+    exit 1
+fi
+
+echo "Copying EdgeOS kernel to boot partition"
+cp $DIR/vmlinux.tmp $BOOT_MNT/vmlinux.64
+cp $DIR/vmlinux.tmp.md5 $BOOT_MNT/vmlinux.64.md5
+
+# The image
+echo "Verifying EdgeOS system image"
+if [ `md5sum $DIR/squashfs.tmp | awk -F ' ' '{print $1}'` != `cat $DIR/squashfs.tmp.md5` ]; then
+    echo "System in image is corrupted! Check your image and start over."
+    exit 1
+fi
+
+echo "Copying EdgeOS system image to root partition"
+mv $DIR/squashfs.tmp $ROOT_MNT/squashfs.img
+mv $DIR/squashfs.tmp.md5 $ROOT_MNT/squashfs.img.md5
+
+echo "Copying version file to the root partition"
+mv $DIR/version.tmp $ROOT_MNT/version
+
+# Writable data dir
+echo "Creating EdgeOS writable data directory"
+mkdir $ROOT_MNT/w
+#######
+
+umount $BOOT_MNT
+umount $ROOT_MNT
+losetup -d $DEVICE
+
+echo "Compressing image."
+gzip -9 $IMG
+
+echo "Done."
