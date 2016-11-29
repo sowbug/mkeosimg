@@ -11,8 +11,11 @@ DEVICE=`losetup -f`
 DEVICE_BOOT=${DEVICE}p1
 DEVICE_ROOT=${DEVICE}p2
 
+CONFIG=edgeos_config.tar.gz
+
 BOOT_MNT=/mnt/boot
 ROOT_MNT=/mnt/root
+SQUASH_MNT=/mnt/squash
 
 if [[ -z "$TARBALL" ]]
 then
@@ -22,13 +25,21 @@ fi
 
 mkdir -p $BOOT_MNT
 mkdir -p $ROOT_MNT
+mkdir -p $SQUASH_MNT
 
 umount $BOOT_MNT
 umount $ROOT_MNT
+umount $SQUASH_MNT
 
 DIR=`mktemp -d`
 
 function cleanup {
+    umount $ROOT_MNT
+    umount $BOOT_MNT
+
+    # Unhook img
+    losetup -d $DEVICE
+
     if [ -d "$DIR" ]
     then
         rm -rf "$DIR"
@@ -40,6 +51,10 @@ function cleanup {
     if [ -d "$ROOT_MNT" ]
     then
         rm -rf "$ROOT_MNT"
+    fi
+    if [ -d "$SQUASH_MNT" ]
+    then
+        rm -rf "$SQUASH_MNT"
     fi
 }
 trap cleanup EXIT
@@ -64,9 +79,10 @@ mount $DEVICE_ROOT $ROOT_MNT
 echo "Unpacking EdgeOS release image"
 tar xf $TARBALL -C $DIR
 
-# The kernel
+####### Kernel
 echo "Verifying EdgeOS kernel"
-if [ `md5sum $DIR/vmlinux.tmp | awk -F ' ' '{print $1}'` != `cat $DIR/vmlinux.tmp.md5` ]; then
+if [ `md5sum $DIR/vmlinux.tmp | awk -F ' ' '{print $1}'` != \
+     `cat $DIR/vmlinux.tmp.md5` ]; then
     echo "Kernel in image is corrupted! Check your image and start over."
     exit 1
 fi
@@ -75,9 +91,12 @@ echo "Copying EdgeOS kernel to boot partition"
 cp $DIR/vmlinux.tmp $BOOT_MNT/vmlinux.64
 cp $DIR/vmlinux.tmp.md5 $BOOT_MNT/vmlinux.64.md5
 
-# The image
+chown 1000:1000 $BOOT_MNT/*
+
+####### System
 echo "Verifying EdgeOS system image"
-if [ `md5sum $DIR/squashfs.tmp | awk -F ' ' '{print $1}'` != `cat $DIR/squashfs.tmp.md5` ]; then
+if [ `md5sum $DIR/squashfs.tmp | awk -F ' ' '{print $1}'` != \
+     `cat $DIR/squashfs.tmp.md5` ]; then
     echo "System in image is corrupted! Check your image and start over."
     exit 1
 fi
@@ -90,13 +109,19 @@ echo "Copying version file to the root partition"
 mv $DIR/version.tmp $ROOT_MNT/version
 
 # Writable data dir
-echo "Creating EdgeOS writable data directory"
+echo "Creating EdgeOS writable data directories"
 mkdir $ROOT_MNT/w
-#######
+mkdir $ROOT_MNT/www
 
-umount $BOOT_MNT
-umount $ROOT_MNT
-losetup -d $DEVICE
+chown 33:0 $ROOT_MNT/www
+
+####### Config
+if [ -f $CONFIG ]
+then
+    tar xf $CONFIG -C $ROOT_MNT/w
+fi
+
+ls -lR $ROOT_MNT
 
 echo "Compressing image."
 gzip -9 $IMG
