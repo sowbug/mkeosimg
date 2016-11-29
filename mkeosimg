@@ -121,8 +121,6 @@ then
     tar xf $CONFIG -C $ROOT_MNT/w
 fi
 
-ls -lR $ROOT_MNT
-
 echo "Compressing image."
 gzip -9 $IMG
 
