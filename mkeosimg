@@ -64,7 +64,7 @@ parted --script $DEVICE mkpart primary fat32 1 150MB
 parted --script $DEVICE mkpart primary ext3 150MB 1900MB
 
 echo "Formatting $IMG"
-mkfs.vfat $DEVICE_BOOT
+mkfs.msdos -F 32 $DEVICE_BOOT
 mkfs.ext3 -q $DEVICE_ROOT
 
 mount $DEVICE_BOOT $BOOT_MNT
@@ -122,8 +122,5 @@ umount $BOOT_MNT
 
 # Unhook img
 losetup -d $DEVICE
-
-echo "Compressing image."
-gzip -9 $IMG
 
 echo "Done."
