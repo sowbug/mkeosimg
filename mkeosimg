@@ -15,7 +15,6 @@ CONFIG=edgeos_config.tar.gz
 
 BOOT_MNT=/mnt/boot
 ROOT_MNT=/mnt/root
-SQUASH_MNT=/mnt/squash
 
 if [[ -z "$TARBALL" ]]
 then
@@ -25,11 +24,9 @@ fi
 
 mkdir -p $BOOT_MNT
 mkdir -p $ROOT_MNT
-mkdir -p $SQUASH_MNT
 
 umount $BOOT_MNT
 umount $ROOT_MNT
-umount $SQUASH_MNT
 
 DIR=`mktemp -d`
 
@@ -45,10 +42,6 @@ function cleanup {
     if [ -d "$ROOT_MNT" ]
     then
         rm -rf "$ROOT_MNT"
-    fi
-    if [ -d "$SQUASH_MNT" ]
-    then
-        rm -rf "$SQUASH_MNT"
     fi
 }
 trap cleanup EXIT
@@ -122,7 +115,7 @@ then
     tar xf $CONFIG -C $ROOT_MNT/w
 fi
 
-# These need to happen before the gzip, or else the changes won't be
+# These need to happen before the losetup -d, or else the changes won't be
 # written to disk
 umount $ROOT_MNT
 umount $BOOT_MNT
