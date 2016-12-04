@@ -53,7 +53,14 @@ function cleanup {
 }
 trap cleanup EXIT
 
-IMG=${TARBALL%.tar}.img
+if [ -f $CONFIG ]
+then
+    CONFIGURED_SUFFIX="-configured"
+else
+    CONFIGURED_SUFFIX=""
+fi
+
+IMG=${TARBALL%.tar}${CONFIGURED_SUFFIX}.img
 rm -f $IMG.gz
 
 echo "Creating $IMG"
