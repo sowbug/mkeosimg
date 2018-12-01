@@ -85,8 +85,6 @@ echo "Copying EdgeOS kernel to boot partition"
 cp $DIR/vmlinux.tmp $BOOT_MNT/vmlinux.64
 cp $DIR/vmlinux.tmp.md5 $BOOT_MNT/vmlinux.64.md5
 
-chown 1000:1000 $BOOT_MNT/*
-
 ####### System
 echo "Verifying EdgeOS system image"
 if [ `md5sum $DIR/squashfs.tmp | awk -F ' ' '{print $1}'` != \
