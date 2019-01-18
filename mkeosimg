@@ -7,26 +7,28 @@ then
 fi
 
 TARBALL=${1}
+CONFIG=${2}
+DRIVESIZE=${3}
 DEVICE=`losetup -f`
 DEVICE_BOOT=${DEVICE}p1
 DEVICE_ROOT=${DEVICE}p2
-
-CONFIG=edgeos_config.tar.gz
 
 BOOT_MNT=/mnt/boot
 ROOT_MNT=/mnt/root
 
 if [[ -z "$TARBALL" ]]
 then
-    echo "Usage: mkeosimg system_image_tarball"
+    echo "Usage: ./mkeosimg system_image.tar <optional 2nd parameter: /path/to/configfile.tar.gz> <optional 3rd parameter: desired image size in GB>"
+    echo "If you want to provide an image size but no config, use \"-\" without the quotes as the second paramenter."
     exit 1
 fi
 
 mkdir -p $BOOT_MNT
 mkdir -p $ROOT_MNT
 
-umount $BOOT_MNT
-umount $ROOT_MNT
+# unmount only if already mounted
+grep -qs "$BOOT_MNT" /proc/mounts && umount $BOOT_MNT
+grep -qs "$ROOT_MNT" /proc/mounts && umount $ROOT_MNT
 
 DIR=`mktemp -d`
 
@@ -46,7 +48,8 @@ function cleanup {
 }
 trap cleanup EXIT
 
-if [ -f $CONFIG ]
+####### Check if config was supplied as a parameter and if it exists as a file
+if [ ! -z $CONFIG ] && [ -f $CONFIG ]
 then
     CONFIGURED_SUFFIX="-configured"
 else
@@ -56,12 +59,19 @@ fi
 IMG=${TARBALL%.tar}${CONFIGURED_SUFFIX}.img
 rm -f $IMG.gz
 
-echo "Creating $IMG"
-dd if=/dev/zero of=$IMG bs=1M count=2048
+# If no drive size was supplied as a parameter, default to 2 GB
+if [ -z $DRIVESIZE ]
+then
+    DRIVESIZE=2
+fi
+
+echo "Creating $IMG with a size of $DRIVESIZE GB"
+let "SIZE = $DRIVESIZE * 1024"
+dd if=/dev/zero of=$IMG bs=1M count=$SIZE
 losetup $DEVICE $IMG
 parted --script $DEVICE mktable msdos
 parted --script $DEVICE mkpart primary fat32 1 150MB
-parted --script $DEVICE mkpart primary ext3 150MB 1900MB
+parted --script $DEVICE mkpart primary ext3 150MB 100%
 
 echo "Formatting $IMG"
 mkfs.msdos -F 32 $DEVICE_BOOT
@@ -107,8 +117,8 @@ mkdir $ROOT_MNT/www
 
 chown 33:0 $ROOT_MNT/www
 
-####### Config
-if [ -f $CONFIG ]
+####### Extract config
+if [ ! -z $CONFIG ] && [ -f $CONFIG ]
 then
     tar xf $CONFIG -C $ROOT_MNT/w
 fi

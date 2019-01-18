@@ -7,13 +7,19 @@ to a new USB drive.
 
 # Usage
 
-* If you have a backup config file such as
-  edgeos_routername_NNNNNNNN.tar.gz, copy it into this directory and
-  rename it `edgeos_config.tar.gz`.
-
 * `sudo ./mkeosimg ER-e100.v1.xxxxxxx.tar` (you downloaded that file
-  from the [Ubiquiti](https://www.ubnt.com/) site. Pick the latest
-  system update for your router).
+  from the [Ubiquiti](https://www.ui.com/download/edgemax) site. Pick
+  the latest system update for your router).
+
+* If you have a backup config file that you'd like to include, such as
+  edgeos_routername_NNNNNNNN.tar.gz, just provide the path to it as the
+  second parameter.
+
+* If you want to use more of the available space on a larger flash drive,
+  you can enter the total image size in GB as the third parameter.
+  If you don't want to provide a config file, but still want to have a
+  larger image, use "-" (without the quotes) as the second parameter.
+  If no drive size is specified, the script will default to 2 GB.
 
 * Download the resulting .img if you built this elsewhere (such as on
   a Google Compute Engine instance that you spun up just for this
