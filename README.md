@@ -5,6 +5,8 @@ couple hours to figure out how TFTP works. Run this script instead *on
 your nearest Linux machine* and generate a .img that you can dd straight
 to a new USB drive.
 
+If you want to create a USB boot drive directly, use `./mkeosdrive` instead.
+
 # Usage
 
 * `sudo ./mkeosimg ER-e100.v1.xxxxxxx.tar` (you downloaded that file
@@ -28,6 +30,13 @@ to a new USB drive.
 
 * `sudo dd if=ER-e100.v1.xxxxxxx.img of=/dev/path/to/usb/drive bs=1M`
   (adapt to your OS of choice).
+
+* If you want, you can directly create a USB drive without creating an
+  image file first. Use `./mkeosdrive` instead, and supply the target
+  device as the first parameter. All other parameters are shifted by one
+  position accordingly.
+
+  `sudo ./mkeosdrive /dev/path/to/usb/drive ER-e100.v1.xxxxxxx.tar`
 
 * Insert the new USB drive into your router and boot it up. If you
   included your backup config in the first step, then your router will
