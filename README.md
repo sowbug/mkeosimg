@@ -29,7 +29,7 @@ If you want to create a USB boot drive directly, use `./mkeosdrive` instead.
   20x smaller.
 
 * `sudo dd if=ER-e100.v1.xxxxxxx.img of=/dev/path/to/usb/drive bs=1M`
-  (adapt to your OS of choice).
+  (adapt to your OS of choice) to write the image to your USB drive.
 
 * If you want, you can directly create a USB drive without creating an
   image file first. Use `./mkeosdrive` instead, and supply the target

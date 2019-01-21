@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# exit script on any error
+set -e
+
 if [ "$EUID" -ne 0 ]
 then
     echo "Must run as root or with sudo."
@@ -29,9 +32,9 @@ mkdir -p $BOOT_MNT
 mkdir -p $ROOT_MNT
 
 # Unmount all partitions on device
-umount ${DEVICE}? && echo "Unmounted all partitions on $DEVICE"
+umount ${DEVICE}? && echo "Unmounted all partitions on $DEVICE" || echo "no filesystem mounted from $DEVICE"
 
-# Unmount only if already mounted
+# Unmount folders only if already mounted
 grep -qs "$BOOT_MNT" /proc/mounts && umount $BOOT_MNT
 grep -qs "$ROOT_MNT" /proc/mounts && umount $ROOT_MNT
 
@@ -53,7 +56,14 @@ function cleanup {
 }
 trap cleanup EXIT
 
-read -n1 -rsp $'Press any key to continue formatting $DEVICE or hit Ctrl+C to exit now...\n'
+echo "Press any key to continue formatting $DEVICE"
+read -n1 -rsp $'or hit Ctrl+C to exit now...\n'
+
+# deleting existing partiton table first
+dd if=/dev/zero of=$DEVICE bs=512 count=1 conv=notrunc
+
+echo "Waiting for disk sync..."
+sync
 
 parted --script $DEVICE mktable msdos
 parted --script $DEVICE mkpart primary fat32 1 150MB
@@ -68,9 +78,15 @@ else
     parted --script $DEVICE mkpart primary ext3 150MB 100%
 fi
 
+echo "Waiting for disk sync..."
+sync
+
 echo "Formatting $DEVICE partitions..."
 mkfs.msdos -F 32 $DEVICE_BOOT
 mkfs.ext3 -q $DEVICE_ROOT
+
+echo "Waiting for disk sync..."
+sync
 
 mount $DEVICE_BOOT $BOOT_MNT
 mount $DEVICE_ROOT $ROOT_MNT
