@@ -1,33 +1,40 @@
 #!/bin/bash
 
+# exit script on any error
+set -e
+
 if [ "$EUID" -ne 0 ]
 then
     echo "Must run as root or with sudo."
     exit 1
 fi
 
-TARBALL=${1}
-CONFIG=${2}
-DRIVESIZE=${3}
-DEVICE=`losetup -f`
-DEVICE_BOOT=${DEVICE}p1
-DEVICE_ROOT=${DEVICE}p2
+DEVICE=${1}
+TARBALL=${2}
+CONFIG=${3}
+DRIVESIZE=${4}
+
+DEVICE_BOOT=${DEVICE}1
+DEVICE_ROOT=${DEVICE}2
 
 BOOT_MNT=/mnt/boot
 ROOT_MNT=/mnt/root
 
 if [[ -z "$TARBALL" ]]
 then
-    echo "Usage: ./mkeosimg system_image.tar <optional 2nd parameter: /path/to/configfile.tar.gz> \
-    <optional 3rd parameter: desired image size in GB>"
-    echo "If you want to provide an image size but no config, use \"-\" without the quotes as the second paramenter."
+    echo "Usage: ./mkeosdrive /dev/yourUSBdrive system_image.tar <optional 3rd parameter: /path/to/configfile.tar.gz>\
+    <optional 4th parameter: desired end cap size of root partition in GB>"
+    echo "If you want to provide a root partition end cap size but no config, use \"-\" without the quotes as the third paramenter."
     exit 1
 fi
 
 mkdir -p $BOOT_MNT
 mkdir -p $ROOT_MNT
 
-# unmount only if already mounted
+# Unmount all partitions on device
+umount ${DEVICE}? && echo "Unmounted all partitions on $DEVICE" || echo "no filesystem mounted from $DEVICE"
+
+# Unmount folders only if already mounted
 grep -qs "$BOOT_MNT" /proc/mounts && umount $BOOT_MNT
 grep -qs "$ROOT_MNT" /proc/mounts && umount $ROOT_MNT
 
@@ -49,34 +56,37 @@ function cleanup {
 }
 trap cleanup EXIT
 
-####### Check if config was supplied as a parameter and if it exists as a file
-if [ ! -z $CONFIG ] && [ -f $CONFIG ]
-then
-    CONFIGURED_SUFFIX="-configured"
-else
-    CONFIGURED_SUFFIX=""
-fi
+echo "Press any key to continue formatting $DEVICE"
+read -n1 -rsp $'or hit Ctrl+C to exit now...\n'
 
-IMG=${TARBALL%.tar}${CONFIGURED_SUFFIX}.img
-rm -f $IMG.gz
+# deleting existing partiton table first
+dd if=/dev/zero of=$DEVICE bs=512 count=1 conv=notrunc
 
-# If no drive size was supplied as a parameter, default to 2 GB
-if [ -z $DRIVESIZE ]
-then
-    DRIVESIZE=2
-fi
+echo "Waiting for disk sync..."
+sync
 
-echo "Creating $IMG with a size of $DRIVESIZE GB"
-let "SIZE = $DRIVESIZE * 1024"
-dd if=/dev/zero of=$IMG bs=1M count=$SIZE
-losetup $DEVICE $IMG
 parted --script $DEVICE mktable msdos
 parted --script $DEVICE mkpart primary fat32 1 150MB
-parted --script $DEVICE mkpart primary ext3 150MB 100%
 
-echo "Formatting $IMG"
+# If no drive size was supplied as a parameter, default to full size root partition
+if [ ! -z $DRIVESIZE ]
+then
+    echo "Creating root partition with an end cap size of $DRIVESIZE GB"
+    let "SIZE = $DRIVESIZE * 1024"
+    parted --script $DEVICE mkpart primary ext3 150MB ${SIZE}MB
+else
+    parted --script $DEVICE mkpart primary ext3 150MB 100%
+fi
+
+echo "Waiting for disk sync..."
+sync
+
+echo "Formatting $DEVICE partitions..."
 mkfs.msdos -F 32 $DEVICE_BOOT
 mkfs.ext3 -q $DEVICE_ROOT
+
+echo "Waiting for disk sync..."
+sync
 
 mount $DEVICE_BOOT $BOOT_MNT
 mount $DEVICE_ROOT $ROOT_MNT
@@ -121,15 +131,17 @@ chown 33:0 $ROOT_MNT/www
 ####### Extract config
 if [ ! -z $CONFIG ] && [ -f $CONFIG ]
 then
+    echo "Config archive $CONFIG was provided, extracting it to the root partition..."
     tar xf $CONFIG -C $ROOT_MNT/w
+else
+    echo "No config archive was provided, default settings will be used."
 fi
 
-# These need to happen before the losetup -d, or else the changes won't be
-# written to disk
+echo "Waiting for disk sync..."
+sync
+
+echo "Unmounting filesystems on $DEVICE..."
 umount $ROOT_MNT
 umount $BOOT_MNT
 
-# Unhook img
-losetup -d $DEVICE
-
-echo "Done."
+echo "Done. You can now plug the USB drive back into your router and boot it."
