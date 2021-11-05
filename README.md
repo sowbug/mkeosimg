@@ -43,6 +43,15 @@ If you want to create a USB boot drive directly, use `./mkeosdrive` instead.
   start shuttling around packets on your network just like it used to;
   otherwise you'll have to set it up as a brand-new device.
 
+# Troubleshooting
+
+* Did everything, but router's still not booting? Your USB drive might
+  be on the slow side. See [issue
+  #7](https://github.com/sowbug/mkeosimg/issues/7) for more detail,
+  and thanks [@kosta](https://github.com/kosta) for filing the issue.
+
+# Credits and Miscellaneous
+
 Inspired by
 https://github.com/vyos/emrk/blob/master/bin/emrk-reinstall. Some parts
 of the code were stolen from there as well.
