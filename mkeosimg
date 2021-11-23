@@ -68,7 +68,7 @@ fi
 
 echo "Creating $IMG with a size of $DRIVESIZE GB"
 let "SIZE = $DRIVESIZE * 1024"
-dd if=/dev/zero of=$IMG bs=1 count=0 seek=${SIZE}M
+dd if=/dev/zero of=$IMG bs=1M count=0 seek=$SIZE
 losetup $DEVICE $IMG
 parted --script $DEVICE mktable msdos
 parted --script $DEVICE mkpart primary fat32 1 150MB
