@@ -1,15 +1,15 @@
 #!/bin/bash
 
 if [ "$EUID" -ne 0 ]
-then
     echo "Must run as root or with sudo."
+then
     exit 1
 fi
 
 TARBALL=${1}
 CONFIG=${2}
 DRIVESIZE=${3}
-DEVICE=`losetup -f`
+DEVICE=$(losetup -f)
 DEVICE_BOOT=${DEVICE}p1
 DEVICE_ROOT=${DEVICE}p2
 
@@ -31,7 +31,7 @@ mkdir -p $ROOT_MNT
 grep -qs "$BOOT_MNT" /proc/mounts && umount $BOOT_MNT
 grep -qs "$ROOT_MNT" /proc/mounts && umount $ROOT_MNT
 
-DIR=`mktemp -d`
+DIR=$(mktemp -d)
 
 function cleanup {
     if [ -d "$DIR" ]
@@ -50,7 +50,7 @@ function cleanup {
 trap cleanup EXIT
 
 ####### Check if config was supplied as a parameter and if it exists as a file
-if [ ! -z $CONFIG ] && [ -f $CONFIG ]
+if [ -n "$CONFIG" ] && [ -f "$CONFIG" ]
 then
     CONFIGURED_SUFFIX="-configured"
 else
@@ -58,58 +58,58 @@ else
 fi
 
 IMG=${TARBALL%.tar}${CONFIGURED_SUFFIX}.img
-rm -f $IMG.gz
+rm -f "$IMG.gz"
 
 # If no drive size was supplied as a parameter, default to 2 GB
-if [ -z $DRIVESIZE ]
+if [ -z "$DRIVESIZE" ]
 then
     DRIVESIZE=2
 fi
 
 echo "Creating $IMG with a size of $DRIVESIZE GB"
-let "SIZE = $DRIVESIZE * 1024"
-dd if=/dev/zero of=$IMG bs=1M count=0 seek=$SIZE
-losetup $DEVICE $IMG
-parted --script $DEVICE mktable msdos
-parted --script $DEVICE mkpart primary fat32 1 150MB
-parted --script $DEVICE mkpart primary ext3 150MB 100%
+(( SIZE = DRIVESIZE * 1024 ))
+dd if=/dev/zero of="$IMG" bs=1M count=0 seek="$SIZE"
+losetup "$DEVICE" "$IMG"
+parted --script "$DEVICE" mktable msdos
+parted --script "$DEVICE" mkpart primary fat32 1 150MB
+parted --script "$DEVICE" mkpart primary ext3 150MB 100%
 
 echo "Formatting $IMG"
-mkfs.msdos -F 32 $DEVICE_BOOT
-mkfs.ext3 -q $DEVICE_ROOT
+mkfs.msdos -F 32 "$DEVICE_BOOT"
+mkfs.ext3 -q "$DEVICE_ROOT"
 
-mount $DEVICE_BOOT $BOOT_MNT
-mount $DEVICE_ROOT $ROOT_MNT
+mount "$DEVICE_BOOT" $BOOT_MNT
+mount "$DEVICE_ROOT" $ROOT_MNT
 
 echo "Unpacking EdgeOS release image"
-tar xf $TARBALL -C $DIR
+tar xf "$TARBALL" -C "$DIR"
 
 ####### Kernel
 echo "Verifying EdgeOS kernel"
-if [ `md5sum $DIR/vmlinux.tmp | awk -F ' ' '{print $1}'` != \
-     `cat $DIR/vmlinux.tmp.md5` ]; then
+if [ "$(md5sum "$DIR"/vmlinux.tmp | awk -F ' ' '{print $1}')" != \
+     "$(cat "$DIR"/vmlinux.tmp.md5)" ]; then
     echo "Kernel in image is corrupted! Check your image and start over."
     exit 1
 fi
 
 echo "Copying EdgeOS kernel to boot partition"
-cp $DIR/vmlinux.tmp $BOOT_MNT/vmlinux.64
-cp $DIR/vmlinux.tmp.md5 $BOOT_MNT/vmlinux.64.md5
+cp "$DIR"/vmlinux.tmp $BOOT_MNT/vmlinux.64
+cp "$DIR"/vmlinux.tmp.md5 $BOOT_MNT/vmlinux.64.md5
 
 ####### System
 echo "Verifying EdgeOS system image"
-if [ `md5sum $DIR/squashfs.tmp | awk -F ' ' '{print $1}'` != \
-     `cat $DIR/squashfs.tmp.md5` ]; then
+if [ "$(md5sum "$DIR"/squashfs.tmp | awk -F ' ' '{print $1}')" != \
+     "$(cat "$DIR"/squashfs.tmp.md5)" ]; then
     echo "System in image is corrupted! Check your image and start over."
     exit 1
 fi
 
 echo "Copying EdgeOS system image to root partition"
-mv $DIR/squashfs.tmp $ROOT_MNT/squashfs.img
-mv $DIR/squashfs.tmp.md5 $ROOT_MNT/squashfs.img.md5
+mv "$DIR"/squashfs.tmp $ROOT_MNT/squashfs.img
+mv "$DIR"/squashfs.tmp.md5 $ROOT_MNT/squashfs.img.md5
 
 echo "Copying version file to the root partition"
-mv $DIR/version.tmp $ROOT_MNT/version
+mv "$DIR"/version.tmp $ROOT_MNT/version
 
 # Writable data dir
 echo "Creating EdgeOS writable data directories"
@@ -119,9 +119,9 @@ mkdir $ROOT_MNT/www
 chown 33:0 $ROOT_MNT/www
 
 ####### Extract config
-if [ ! -z $CONFIG ] && [ -f $CONFIG ]
+if [ -n "$CONFIG" ] && [ -f "$CONFIG" ]
 then
-    tar xf $CONFIG -C $ROOT_MNT/w
+    tar xf "$CONFIG" -C $ROOT_MNT/w
 fi
 
 # These need to happen before the losetup -d, or else the changes won't be
@@ -130,6 +130,6 @@ umount $ROOT_MNT
 umount $BOOT_MNT
 
 # Unhook img
-losetup -d $DEVICE
+losetup -d "$DEVICE"
 
 echo "Done."
