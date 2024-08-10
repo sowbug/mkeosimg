@@ -24,7 +24,7 @@ if [[ -z "$TARBALL" ]]
 then
     echo "Usage: ./mkeosdrive /dev/yourUSBdrive system_image.tar <optional 3rd parameter: /path/to/configfile.tar.gz>\
     <optional 4th parameter: desired end cap size of root partition in GB>"
-    echo "If you want to provide a root partition end cap size but no config, use \"-\" without the quotes as the third paramenter."
+    echo "If you want to provide a root partition end cap size but no config, use \"-\" without the quotes as the third parameter."
     exit 1
 fi
 
@@ -80,6 +80,9 @@ fi
 
 echo "Waiting for disk sync..."
 sync
+
+# Add a delay to allow the system to recognize the new partitions
+sleep 2
 
 echo "Formatting $DEVICE partitions..."
 mkfs.msdos -F 32 "$DEVICE_BOOT"
