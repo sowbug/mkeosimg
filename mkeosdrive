@@ -92,9 +92,10 @@ else
     # Unmount all partitions on device
     umount "${DEVICE}"? && echo "Unmounted all partitions on $DEVICE" || echo "no filesystem mounted from $DEVICE"
 
-    # Unmount folders only if already mounted
-    grep -qs "$BOOT_MNT" /proc/mounts && umount $BOOT_MNT
-    grep -qs "$ROOT_MNT" /proc/mounts && umount $ROOT_MNT
+    # Unmount folders only if already mounted ("|| true" so a not-mounted path
+    # isn't treated as a failure by "set -e")
+    grep -qs "$BOOT_MNT" /proc/mounts && umount $BOOT_MNT || true
+    grep -qs "$ROOT_MNT" /proc/mounts && umount $ROOT_MNT || true
 fi
 
 DIR=$(mktemp -d)
