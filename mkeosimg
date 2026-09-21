@@ -65,6 +65,52 @@ then
     exit 1
 fi
 
+####### Validate the release tarball before touching anything else. Passing a
+####### device here (mkeosdrive's first parameter) is an easy mistake to make,
+####### and without this check the script would try to create an image file
+####### inside /dev and then fail on every subsequent step.
+case "$TARBALL" in
+    /dev/*)
+        echo "$TARBALL is a device, but $(basename "$0") expects an EdgeOS release tarball." >&2
+        echo "To write directly to a USB drive, use mkeosdrive instead:" >&2
+        echo "    sudo $(dirname "$0")/mkeosdrive $TARBALL system_image.tar [config.tar.gz]" >&2
+        exit 1
+        ;;
+esac
+
+if [ ! -f "$TARBALL" ]
+then
+    echo "System image tarball not found: $TARBALL" >&2
+    usage
+    exit 1
+fi
+
+if ! tar tf "$TARBALL" >/dev/null 2>&1
+then
+    echo "$TARBALL is not a readable tar archive." >&2
+    echo "Supply the EdgeOS release tarball you downloaded from Ubiquiti." >&2
+    exit 1
+fi
+
+####### A config that was supplied but can't be read is always a mistake (a
+####### typo'd path, or parameters in the wrong order). Say so instead of
+####### silently building an unconfigured image.
+if [ -n "$CONFIG" ] && [ "$CONFIG" != "-" ] && [ ! -f "$CONFIG" ]
+then
+    echo "Config archive not found: $CONFIG" >&2
+    usage
+    exit 1
+fi
+
+####### Same for the size: a non-numeric value here usually means the parameters
+####### are shifted by one.
+if [ -n "$DRIVESIZE" ] && ! [[ "$DRIVESIZE" =~ ^[1-9][0-9]*$ ]]
+then
+    echo "Image size must be a whole number of GB, got: $DRIVESIZE" >&2
+    usage
+    exit 1
+fi
+
 if [ "$OS" = "Darwin" ]
 then
     # macOS mounts partitions under temporary directories; nothing lives at a
