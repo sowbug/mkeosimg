@@ -54,6 +54,17 @@ hdiutil_quiet() {
     return $rc
 }
 
+# macOS ships "md5", not GNU "md5sum". Use whichever is present so the integrity
+# checks work without installing coreutils.
+md5_of() {
+    if command -v md5sum >/dev/null 2>&1
+    then
+        md5sum "$1" | awk '{print $1}'
+    else
+        md5 -q "$1"
+    fi
+}
+
 # Tag the root partition (slice 2) as Linux (0x83) in the MBR, matching what
 # parted's "mkpart ext3" does on Linux, so the router's kernel treats it as the
 # ext3 root filesystem. diskutil only knows about its own filesystem types, so we
@@ -252,16 +263,14 @@ done
 
 ####### Kernel
 echo "Verifying EdgeOS kernel"
-if [ "$(md5sum "$DIR"/vmlinux.tmp | awk -F ' ' '{print $1}')" != \
-     "$(cat "$DIR"/vmlinux.tmp.md5)" ]; then
+if [ "$(md5_of "$DIR"/vmlinux.tmp)" != "$(cat "$DIR"/vmlinux.tmp.md5)" ]; then
     echo "Kernel in image is corrupted! Check your image and start over."
     exit 1
 fi
 
 ####### System
 echo "Verifying EdgeOS system image"
-if [ "$(md5sum "$DIR"/squashfs.tmp | awk -F ' ' '{print $1}')" != \
-     "$(cat "$DIR"/squashfs.tmp.md5)" ]; then
+if [ "$(md5_of "$DIR"/squashfs.tmp)" != "$(cat "$DIR"/squashfs.tmp.md5)" ]; then
     echo "System in image is corrupted! Check your image and start over."
     exit 1
 fi
