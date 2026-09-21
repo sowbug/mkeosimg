@@ -124,8 +124,8 @@ then
     if [ -n "$DRIVESIZE" ]
     then
         echo "Creating root partition with an end cap size of $DRIVESIZE GB"
-        (( SIZE = DRIVESIZE * 1024 ))
-        (( ROOTMB = SIZE - 150 ))
+        SIZE=$(( DRIVESIZE * 1024 ))
+        ROOTMB=$(( SIZE - 150 ))
         diskutil partitionDisk "$DEVICE" MBR \
             "MS-DOS FAT32" BOOT 150M \
             "MS-DOS FAT32" ROOT "${ROOTMB}M" \
@@ -156,7 +156,7 @@ else
     if [ -n "$DRIVESIZE" ]
     then
         echo "Creating root partition with an end cap size of $DRIVESIZE GB"
-        (( SIZE = DRIVESIZE * 1024 ))
+        SIZE=$(( DRIVESIZE * 1024 ))
         parted --script "$DEVICE" mkpart primary ext3 150MB "${SIZE}"MB
     else
         parted --script "$DEVICE" mkpart primary ext3 150MB 100%

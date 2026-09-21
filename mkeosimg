@@ -120,7 +120,7 @@ then
 fi
 
 echo "Creating $IMG with a size of $DRIVESIZE GB"
-(( SIZE = DRIVESIZE * 1024 ))
+SIZE=$(( DRIVESIZE * 1024 ))
 dd if=/dev/zero of="$IMG" bs=1048576 count=0 seek="$SIZE"
 
 if [ "$OS" = "Darwin" ]
