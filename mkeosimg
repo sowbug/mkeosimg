@@ -183,16 +183,43 @@ STAGE=$(mktemp -d)
 DEVICE=""
 
 function cleanup {
-    # On macOS make sure the image is detached before removing scratch dirs.
-    if [ "$OS" = "Darwin" ] && [ -n "$DEVICE" ]
+    # Release the image before touching any directory. On Linux the mount points
+    # are live filesystems inside the image, so deleting through them would empty
+    # the partition we just populated. These all fail on the success path, where
+    # the script has already done them, hence the "|| true".
+    if [ "$OS" = "Darwin" ]
     then
-        hdiutil detach "$DEVICE" >/dev/null 2>&1
+        if [ -n "$DEVICE" ]
+        then
+            hdiutil detach "$DEVICE" >/dev/null 2>&1 || true
+        fi
+    else
+        umount "$ROOT_MNT" >/dev/null 2>&1 || true
+        umount "$BOOT_MNT" >/dev/null 2>&1 || true
+        if [ -n "$DEVICE" ]
+        then
+            losetup -d "$DEVICE" >/dev/null 2>&1 || true
+        fi
     fi
-    for d in "$DIR" "$STAGE" "$BOOT_MNT" "$ROOT_MNT"
+
+    # Only the scratch directories came from mktemp, so they are the only ones
+    # safe to remove recursively.
+    for d in "$DIR" "$STAGE"
     do
         if [ -n "$d" ] && [ -d "$d" ]
         then
             rm -rf "$d"
+        fi
+    done
+
+    # The mount points are empty once unmounted, so rmdir is enough. If an
+    # unmount didn't work, rmdir refuses instead of deleting whatever is still
+    # mounted there.
+    for d in "$BOOT_MNT" "$ROOT_MNT"
+    do
+        if [ -n "$d" ] && [ -d "$d" ]
+        then
+            rmdir "$d" >/dev/null 2>&1 || true
         fi
     done
 }
@@ -375,6 +402,7 @@ else
 
     # Unhook img
     losetup -d "$DEVICE"
+    DEVICE=""
 fi
 
 echo "Done."
