@@ -39,6 +39,21 @@ usage() {
     echo "To set an image size without a config, pass \"-\" as the second parameter." >&2
 }
 
+# macOS 26 and later print a deprecation warning for "hdiutil attach"/"detach".
+# It is only a warning, and its replacement (diskutil image attach) isn't
+# available on older releases, so keep using hdiutil and drop just that line
+# while still passing real errors through.
+hdiutil_quiet() {
+    local rc=0 err
+    # fd 3 carries hdiutil's stdout straight through to our caller while the
+    # command substitution captures only stderr
+    exec 3>&1
+    err=$(hdiutil "$@" 2>&1 1>&3) || rc=$?
+    exec 3>&-
+    printf '%s' "$err" | grep -v "is deprecated\. Please use" >&2 || true
+    return $rc
+}
+
 # Tag the root partition (slice 2) as Linux (0x83) in the MBR, matching what
 # parted's "mkpart ext3" does on Linux, so the router's kernel treats it as the
 # ext3 root filesystem. diskutil only knows about its own filesystem types, so we
@@ -178,7 +193,7 @@ if [ "$OS" = "Darwin" ]
 then
     # Attach the image as a disk device (without mounting) so diskutil can
     # partition it; slices appear as /dev/diskNsX.
-    DEVICE=$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "$IMG" | head -1 | awk '{print $1}')
+    DEVICE=$(hdiutil_quiet attach -nomount -imagekey diskimage-class=CRawDiskImage "$IMG" | head -1 | awk '{print $1}')
 
     # Everything below addresses $DEVICE, so stop now if the attach didn't hand
     # back a disk rather than running diskutil/mke2fs against an empty string.
@@ -290,7 +305,7 @@ then
 
     # Unhook img
     diskutil unmountDisk "$DEVICE" >/dev/null 2>&1 || true
-    hdiutil detach "$DEVICE"
+    hdiutil_quiet detach "$DEVICE"
     DEVICE=""
 else
     echo "Copying EdgeOS kernel to boot partition"
