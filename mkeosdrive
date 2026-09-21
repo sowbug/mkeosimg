@@ -15,9 +15,32 @@ OS=$(uname -s)
 # (from e2fsprogs) is the one extra tool we need. Partitioning and the FAT32
 # boot filesystem are handled by the built-in diskutil/fdisk. Check up front
 # and point the user at both common package managers if it is missing.
+MKE2FS=mke2fs
 if [ "$OS" = "Darwin" ]
 then
-    if ! command -v mke2fs >/dev/null 2>&1
+    # Homebrew keeps e2fsprogs keg-only, so "brew install e2fsprogs" leaves
+    # mke2fs off PATH. Look in the package managers' own directories first;
+    # that also avoids picking up an unrelated mke2fs (the Android SDK ships
+    # one) that happens to be on PATH.
+    MKE2FS=""
+    for candidate in \
+        /opt/homebrew/opt/e2fsprogs/sbin/mke2fs \
+        /usr/local/opt/e2fsprogs/sbin/mke2fs \
+        /opt/local/sbin/mke2fs
+    do
+        if [ -x "$candidate" ]
+        then
+            MKE2FS=$candidate
+            break
+        fi
+    done
+
+    if [ -z "$MKE2FS" ]
+    then
+        MKE2FS=$(command -v mke2fs 2>/dev/null || true)
+    fi
+
+    if [ -z "$MKE2FS" ]
     then
         echo "Missing required tool on macOS: mke2fs"
         echo "Install it with one of:"
@@ -290,7 +313,7 @@ then
     echo "Creating ext3 root filesystem"
     # -F: diskutil already put a FAT filesystem here, so skip the interactive
     # "overwrite existing filesystem?" prompt (we are replacing it on purpose).
-    mke2fs -F -t ext3 -q -d "$STAGE" "$DEVICE_ROOT"
+    "$MKE2FS" -F -t ext3 -q -d "$STAGE" "$DEVICE_ROOT"
 
     echo "Copying EdgeOS kernel to boot partition"
     # macOS may have auto-mounted the freshly formatted boot slice; make sure it is
