@@ -163,8 +163,9 @@ fi
 if [ "$OS" = "Darwin" ]
 then
     # macOS mounts partitions under temporary directories; nothing lives at a
-    # fixed /mnt path.
+    # fixed /mnt path, and the ext3 root is never mounted here at all.
     BOOT_MNT=$(mktemp -d)
+    ROOT_MNT=""
 else
     mkdir -p $BOOT_MNT
     mkdir -p $ROOT_MNT
@@ -189,7 +190,7 @@ function cleanup {
     fi
     for d in "$DIR" "$STAGE" "$BOOT_MNT" "$ROOT_MNT"
     do
-        if [ -d "$d" ]
+        if [ -n "$d" ] && [ -d "$d" ]
         then
             rm -rf "$d"
         fi

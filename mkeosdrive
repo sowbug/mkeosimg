@@ -160,6 +160,8 @@ then
     # macOS mounts partitions under temporary directories; nothing lives at a
     # fixed /mnt path.
     BOOT_MNT=$(mktemp -d)
+    # The ext3 root is never mounted on macOS, so there is no ROOT_MNT to clean.
+    ROOT_MNT=""
 
     # Unmount all volumes on the target disk (tolerate a disk with none mounted).
     diskutil unmountDisk "$DEVICE" || true
@@ -183,7 +185,7 @@ STAGE=$(mktemp -d)
 function cleanup {
     for d in "$DIR" "$STAGE" "$BOOT_MNT" "$ROOT_MNT"
     do
-        if [ -d "$d" ]
+        if [ -n "$d" ] && [ -d "$d" ]
         then
             rm -rf "$d"
         fi
