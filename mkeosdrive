@@ -226,6 +226,16 @@ fi
 echo "Unpacking EdgeOS release image"
 tar xf "$TARBALL" -C "$DIR"
 
+####### Make sure this really was an EdgeOS release tarball
+for f in vmlinux.tmp vmlinux.tmp.md5 squashfs.tmp squashfs.tmp.md5 version.tmp
+do
+    if [ ! -f "$DIR/$f" ]
+    then
+        echo "$TARBALL does not look like an EdgeOS release image ($f is missing)." >&2
+        exit 1
+    fi
+done
+
 ####### Kernel
 echo "Verifying EdgeOS kernel"
 if [ "$(md5sum "$DIR"/vmlinux.tmp | awk -F ' ' '{print $1}')" != \
