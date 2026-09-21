@@ -77,6 +77,50 @@ then
     exit 1
 fi
 
+####### Validate the parameters before formatting anything. Getting the device
+####### and the tarball the wrong way round would otherwise destroy a disk, or
+####### fail halfway through with a pile of confusing errors.
+if [ ! -b "$DEVICE" ] && [ ! -c "$DEVICE" ]
+then
+    echo "$DEVICE is not a disk device." >&2
+    if [ "$OS" = "Darwin" ]
+    then
+        echo "Find your USB drive with \"diskutil list\" (e.g. /dev/disk4)." >&2
+    else
+        echo "Find your USB drive with \"lsblk\" (e.g. /dev/sdb)." >&2
+    fi
+    usage
+    exit 1
+fi
+
+if [ ! -f "$TARBALL" ]
+then
+    echo "System image tarball not found: $TARBALL" >&2
+    usage
+    exit 1
+fi
+
+if ! tar tf "$TARBALL" >/dev/null 2>&1
+then
+    echo "$TARBALL is not a readable tar archive." >&2
+    echo "Supply the EdgeOS release tarball you downloaded from Ubiquiti." >&2
+    exit 1
+fi
+
+if [ -n "$CONFIG" ] && [ "$CONFIG" != "-" ] && [ ! -f "$CONFIG" ]
+then
+    echo "Config archive not found: $CONFIG" >&2
+    usage
+    exit 1
+fi
+
+if [ -n "$DRIVESIZE" ] && ! [[ "$DRIVESIZE" =~ ^[1-9][0-9]*$ ]]
+then
+    echo "Root end cap size must be a whole number of GB, got: $DRIVESIZE" >&2
+    usage
+    exit 1
+fi
+
 if [ "$OS" = "Darwin" ]
 then
     # macOS mounts partitions under temporary directories; nothing lives at a
