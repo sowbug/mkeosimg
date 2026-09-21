@@ -328,6 +328,9 @@ then
     "$MKE2FS" -F -t ext3 -q -d "$STAGE" "$DEVICE_ROOT"
 
     echo "Copying EdgeOS kernel to boot partition"
+    # macOS may have auto-mounted the boot slice again; make sure it is
+    # unmounted before mounting it at our chosen mount point.
+    diskutil unmount "$DEVICE_BOOT" >/dev/null 2>&1 || true
     diskutil mount -mountPoint "$BOOT_MNT" "$DEVICE_BOOT" >/dev/null
     cp "$DIR"/vmlinux.tmp "$BOOT_MNT"/vmlinux.64
     cp "$DIR"/vmlinux.tmp.md5 "$BOOT_MNT"/vmlinux.64.md5
