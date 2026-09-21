@@ -167,13 +167,29 @@ fi
 
 echo "Creating $IMG with a size of $DRIVESIZE GB"
 SIZE=$(( DRIVESIZE * 1024 ))
-dd if=/dev/zero of="$IMG" bs=1048576 count=0 seek="$SIZE"
+if ! dd if=/dev/zero of="$IMG" bs=1048576 count=0 seek="$SIZE"
+then
+    echo "Could not create the image file $IMG." >&2
+    echo "Check that the directory holding $TARBALL is writable." >&2
+    exit 1
+fi
 
 if [ "$OS" = "Darwin" ]
 then
     # Attach the image as a disk device (without mounting) so diskutil can
     # partition it; slices appear as /dev/diskNsX.
     DEVICE=$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "$IMG" | head -1 | awk '{print $1}')
+
+    # Everything below addresses $DEVICE, so stop now if the attach didn't hand
+    # back a disk rather than running diskutil/mke2fs against an empty string.
+    case "$DEVICE" in
+        /dev/disk*) ;;
+        *)
+            echo "Could not attach $IMG as a disk device." >&2
+            exit 1
+            ;;
+    esac
+
     DEVICE_BOOT=${DEVICE}s1
     DEVICE_ROOT=${DEVICE}s2
 
