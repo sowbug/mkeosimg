@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# exit script on any error, so one failed step doesn't cascade into a screenful
+# of misleading follow-on errors
+set -e
+
 if [ "$EUID" -ne 0 ]
 then
     echo "Must run as root or with sudo."
@@ -12,9 +16,32 @@ OS=$(uname -s)
 # (from e2fsprogs) is the one extra tool we need. Partitioning and the FAT32
 # boot filesystem are handled by the built-in diskutil/fdisk. Check up front
 # and point the user at both common package managers if it is missing.
+MKE2FS=mke2fs
 if [ "$OS" = "Darwin" ]
 then
-    if ! command -v mke2fs >/dev/null 2>&1
+    # Homebrew keeps e2fsprogs keg-only, so "brew install e2fsprogs" leaves
+    # mke2fs off PATH. Look in the package managers' own directories first;
+    # that also avoids picking up an unrelated mke2fs (the Android SDK ships
+    # one) that happens to be on PATH.
+    MKE2FS=""
+    for candidate in \
+        /opt/homebrew/opt/e2fsprogs/sbin/mke2fs \
+        /usr/local/opt/e2fsprogs/sbin/mke2fs \
+        /opt/local/sbin/mke2fs
+    do
+        if [ -x "$candidate" ]
+        then
+            MKE2FS=$candidate
+            break
+        fi
+    done
+
+    if [ -z "$MKE2FS" ]
+    then
+        MKE2FS=$(command -v mke2fs 2>/dev/null || true)
+    fi
+
+    if [ -z "$MKE2FS" ]
     then
         echo "Missing required tool on macOS: mke2fs"
         echo "Install it with one of:"
@@ -33,6 +60,32 @@ usage() {
     echo "  image size in GB   Optional total image size. Defaults to 2 GB." >&2
     echo >&2
     echo "To set an image size without a config, pass \"-\" as the second parameter." >&2
+}
+
+# macOS 26 and later print a deprecation warning for "hdiutil attach"/"detach".
+# It is only a warning, and its replacement (diskutil image attach) isn't
+# available on older releases, so keep using hdiutil and drop just that line
+# while still passing real errors through.
+hdiutil_quiet() {
+    local rc=0 err
+    # fd 3 carries hdiutil's stdout straight through to our caller while the
+    # command substitution captures only stderr
+    exec 3>&1
+    err=$(hdiutil "$@" 2>&1 1>&3) || rc=$?
+    exec 3>&-
+    printf '%s' "$err" | grep -v "is deprecated\. Please use" >&2 || true
+    return $rc
+}
+
+# macOS ships "md5", not GNU "md5sum". Use whichever is present so the integrity
+# checks work without installing coreutils.
+md5_of() {
+    if command -v md5sum >/dev/null 2>&1
+    then
+        md5sum "$1" | awk '{print $1}'
+    else
+        md5 -q "$1"
+    fi
 }
 
 # Tag the root partition (slice 2) as Linux (0x83) in the MBR, matching what
@@ -61,18 +114,66 @@ then
     exit 1
 fi
 
+####### Validate the release tarball before touching anything else. Passing a
+####### device here (mkeosdrive's first parameter) is an easy mistake to make,
+####### and without this check the script would try to create an image file
+####### inside /dev and then fail on every subsequent step.
+case "$TARBALL" in
+    /dev/*)
+        echo "$TARBALL is a device, but $(basename "$0") expects an EdgeOS release tarball." >&2
+        echo "To write directly to a USB drive, use mkeosdrive instead:" >&2
+        echo "    sudo $(dirname "$0")/mkeosdrive $TARBALL system_image.tar [config.tar.gz]" >&2
+        exit 1
+        ;;
+esac
+
+if [ ! -f "$TARBALL" ]
+then
+    echo "System image tarball not found: $TARBALL" >&2
+    usage
+    exit 1
+fi
+
+if ! tar tf "$TARBALL" >/dev/null 2>&1
+then
+    echo "$TARBALL is not a readable tar archive." >&2
+    echo "Supply the EdgeOS release tarball you downloaded from Ubiquiti." >&2
+    exit 1
+fi
+
+####### A config that was supplied but can't be read is always a mistake (a
+####### typo'd path, or parameters in the wrong order). Say so instead of
+####### silently building an unconfigured image.
+if [ -n "$CONFIG" ] && [ "$CONFIG" != "-" ] && [ ! -f "$CONFIG" ]
+then
+    echo "Config archive not found: $CONFIG" >&2
+    usage
+    exit 1
+fi
+
+####### Same for the size: a non-numeric value here usually means the parameters
+####### are shifted by one.
+if [ -n "$DRIVESIZE" ] && ! [[ "$DRIVESIZE" =~ ^[1-9][0-9]*$ ]]
+then
+    echo "Image size must be a whole number of GB, got: $DRIVESIZE" >&2
+    usage
+    exit 1
+fi
+
 if [ "$OS" = "Darwin" ]
 then
     # macOS mounts partitions under temporary directories; nothing lives at a
-    # fixed /mnt path.
+    # fixed /mnt path, and the ext3 root is never mounted here at all.
     BOOT_MNT=$(mktemp -d)
+    ROOT_MNT=""
 else
     mkdir -p $BOOT_MNT
     mkdir -p $ROOT_MNT
 
-    # unmount only if already mounted
-    grep -qs "$BOOT_MNT" /proc/mounts && umount $BOOT_MNT
-    grep -qs "$ROOT_MNT" /proc/mounts && umount $ROOT_MNT
+    # unmount only if already mounted ("|| true" so a not-mounted path isn't
+    # treated as a failure by "set -e")
+    grep -qs "$BOOT_MNT" /proc/mounts && umount $BOOT_MNT || true
+    grep -qs "$ROOT_MNT" /proc/mounts && umount $ROOT_MNT || true
 fi
 
 DIR=$(mktemp -d)
@@ -82,16 +183,43 @@ STAGE=$(mktemp -d)
 DEVICE=""
 
 function cleanup {
-    # On macOS make sure the image is detached before removing scratch dirs.
-    if [ "$OS" = "Darwin" ] && [ -n "$DEVICE" ]
+    # Release the image before touching any directory. On Linux the mount points
+    # are live filesystems inside the image, so deleting through them would empty
+    # the partition we just populated. These all fail on the success path, where
+    # the script has already done them, hence the "|| true".
+    if [ "$OS" = "Darwin" ]
     then
-        hdiutil detach "$DEVICE" >/dev/null 2>&1
+        if [ -n "$DEVICE" ]
+        then
+            hdiutil detach "$DEVICE" >/dev/null 2>&1 || true
+        fi
+    else
+        umount "$ROOT_MNT" >/dev/null 2>&1 || true
+        umount "$BOOT_MNT" >/dev/null 2>&1 || true
+        if [ -n "$DEVICE" ]
+        then
+            losetup -d "$DEVICE" >/dev/null 2>&1 || true
+        fi
     fi
-    for d in "$DIR" "$STAGE" "$BOOT_MNT" "$ROOT_MNT"
+
+    # Only the scratch directories came from mktemp, so they are the only ones
+    # safe to remove recursively.
+    for d in "$DIR" "$STAGE"
     do
-        if [ -d "$d" ]
+        if [ -n "$d" ] && [ -d "$d" ]
         then
             rm -rf "$d"
+        fi
+    done
+
+    # The mount points are empty once unmounted, so rmdir is enough. If an
+    # unmount didn't work, rmdir refuses instead of deleting whatever is still
+    # mounted there.
+    for d in "$BOOT_MNT" "$ROOT_MNT"
+    do
+        if [ -n "$d" ] && [ -d "$d" ]
+        then
+            rmdir "$d" >/dev/null 2>&1 || true
         fi
     done
 }
@@ -115,14 +243,30 @@ then
 fi
 
 echo "Creating $IMG with a size of $DRIVESIZE GB"
-(( SIZE = DRIVESIZE * 1024 ))
-dd if=/dev/zero of="$IMG" bs=1048576 count=0 seek="$SIZE"
+SIZE=$(( DRIVESIZE * 1024 ))
+if ! dd if=/dev/zero of="$IMG" bs=1048576 count=0 seek="$SIZE"
+then
+    echo "Could not create the image file $IMG." >&2
+    echo "Check that the directory holding $TARBALL is writable." >&2
+    exit 1
+fi
 
 if [ "$OS" = "Darwin" ]
 then
     # Attach the image as a disk device (without mounting) so diskutil can
     # partition it; slices appear as /dev/diskNsX.
-    DEVICE=$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "$IMG" | head -1 | awk '{print $1}')
+    DEVICE=$(hdiutil_quiet attach -nomount -imagekey diskimage-class=CRawDiskImage "$IMG" | head -1 | awk '{print $1}')
+
+    # Everything below addresses $DEVICE, so stop now if the attach didn't hand
+    # back a disk rather than running diskutil/mke2fs against an empty string.
+    case "$DEVICE" in
+        /dev/disk*) ;;
+        *)
+            echo "Could not attach $IMG as a disk device." >&2
+            exit 1
+            ;;
+    esac
+
     DEVICE_BOOT=${DEVICE}s1
     DEVICE_ROOT=${DEVICE}s2
 
@@ -158,18 +302,26 @@ fi
 echo "Unpacking EdgeOS release image"
 tar xf "$TARBALL" -C "$DIR"
 
+####### Make sure this really was an EdgeOS release tarball
+for f in vmlinux.tmp vmlinux.tmp.md5 squashfs.tmp squashfs.tmp.md5 version.tmp
+do
+    if [ ! -f "$DIR/$f" ]
+    then
+        echo "$TARBALL does not look like an EdgeOS release image ($f is missing)." >&2
+        exit 1
+    fi
+done
+
 ####### Kernel
 echo "Verifying EdgeOS kernel"
-if [ "$(md5sum "$DIR"/vmlinux.tmp | awk -F ' ' '{print $1}')" != \
-     "$(cat "$DIR"/vmlinux.tmp.md5)" ]; then
+if [ "$(md5_of "$DIR"/vmlinux.tmp)" != "$(cat "$DIR"/vmlinux.tmp.md5)" ]; then
     echo "Kernel in image is corrupted! Check your image and start over."
     exit 1
 fi
 
 ####### System
 echo "Verifying EdgeOS system image"
-if [ "$(md5sum "$DIR"/squashfs.tmp | awk -F ' ' '{print $1}')" != \
-     "$(cat "$DIR"/squashfs.tmp.md5)" ]; then
+if [ "$(md5_of "$DIR"/squashfs.tmp)" != "$(cat "$DIR"/squashfs.tmp.md5)" ]; then
     echo "System in image is corrupted! Check your image and start over."
     exit 1
 fi
@@ -200,9 +352,12 @@ then
     echo "Creating ext3 root filesystem"
     # -F: diskutil already put a FAT filesystem here, so skip the interactive
     # "overwrite existing filesystem?" prompt (we are replacing it on purpose).
-    mke2fs -F -t ext3 -q -d "$STAGE" "$DEVICE_ROOT"
+    "$MKE2FS" -F -t ext3 -q -d "$STAGE" "$DEVICE_ROOT"
 
     echo "Copying EdgeOS kernel to boot partition"
+    # macOS may have auto-mounted the boot slice again; make sure it is
+    # unmounted before mounting it at our chosen mount point.
+    diskutil unmount "$DEVICE_BOOT" >/dev/null 2>&1 || true
     diskutil mount -mountPoint "$BOOT_MNT" "$DEVICE_BOOT" >/dev/null
     cp "$DIR"/vmlinux.tmp "$BOOT_MNT"/vmlinux.64
     cp "$DIR"/vmlinux.tmp.md5 "$BOOT_MNT"/vmlinux.64.md5
@@ -213,7 +368,7 @@ then
 
     # Unhook img
     diskutil unmountDisk "$DEVICE" >/dev/null 2>&1 || true
-    hdiutil detach "$DEVICE"
+    hdiutil_quiet detach "$DEVICE"
     DEVICE=""
 else
     echo "Copying EdgeOS kernel to boot partition"
@@ -247,6 +402,7 @@ else
 
     # Unhook img
     losetup -d "$DEVICE"
+    DEVICE=""
 fi
 
 echo "Done."

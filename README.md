@@ -18,7 +18,10 @@ filesystem that the router needs with its native tools, so install `e2fsprogs`
 
 That's the only extra dependency — partitioning and the FAT32 boot filesystem
 are handled by the built-in `diskutil`/`fdisk`. The scripts detect macOS
-automatically and will tell you if `mke2fs` is missing.
+automatically and will tell you if `mke2fs` is missing. Homebrew keeps
+`e2fsprogs` keg-only (so `mke2fs` doesn't land on your `PATH`); the scripts look
+in Homebrew's and MacPorts' own directories, so there's nothing to link
+manually.
 
 When using `./mkeosdrive`, the target is a whole disk like `/dev/disk4` —
 find it with `diskutil list` (be certain you pick your USB drive, not your

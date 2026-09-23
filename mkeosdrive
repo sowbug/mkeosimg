@@ -15,9 +15,32 @@ OS=$(uname -s)
 # (from e2fsprogs) is the one extra tool we need. Partitioning and the FAT32
 # boot filesystem are handled by the built-in diskutil/fdisk. Check up front
 # and point the user at both common package managers if it is missing.
+MKE2FS=mke2fs
 if [ "$OS" = "Darwin" ]
 then
-    if ! command -v mke2fs >/dev/null 2>&1
+    # Homebrew keeps e2fsprogs keg-only, so "brew install e2fsprogs" leaves
+    # mke2fs off PATH. Look in the package managers' own directories first;
+    # that also avoids picking up an unrelated mke2fs (the Android SDK ships
+    # one) that happens to be on PATH.
+    MKE2FS=""
+    for candidate in \
+        /opt/homebrew/opt/e2fsprogs/sbin/mke2fs \
+        /usr/local/opt/e2fsprogs/sbin/mke2fs \
+        /opt/local/sbin/mke2fs
+    do
+        if [ -x "$candidate" ]
+        then
+            MKE2FS=$candidate
+            break
+        fi
+    done
+
+    if [ -z "$MKE2FS" ]
+    then
+        MKE2FS=$(command -v mke2fs 2>/dev/null || true)
+    fi
+
+    if [ -z "$MKE2FS" ]
     then
         echo "Missing required tool on macOS: mke2fs"
         echo "Install it with one of:"
@@ -38,6 +61,17 @@ usage() {
     echo "                     Defaults to filling the drive." >&2
     echo >&2
     echo "To set a root end cap size without a config, pass \"-\" as the third parameter." >&2
+}
+
+# macOS ships "md5", not GNU "md5sum". Use whichever is present so the integrity
+# checks work without installing coreutils.
+md5_of() {
+    if command -v md5sum >/dev/null 2>&1
+    then
+        md5sum "$1" | awk '{print $1}'
+    else
+        md5 -q "$1"
+    fi
 }
 
 # Tag the root partition (slice 2) as Linux (0x83) in the MBR, matching what
@@ -77,11 +111,57 @@ then
     exit 1
 fi
 
+####### Validate the parameters before formatting anything. Getting the device
+####### and the tarball the wrong way round would otherwise destroy a disk, or
+####### fail halfway through with a pile of confusing errors.
+if [ ! -b "$DEVICE" ] && [ ! -c "$DEVICE" ]
+then
+    echo "$DEVICE is not a disk device." >&2
+    if [ "$OS" = "Darwin" ]
+    then
+        echo "Find your USB drive with \"diskutil list\" (e.g. /dev/disk4)." >&2
+    else
+        echo "Find your USB drive with \"lsblk\" (e.g. /dev/sdb)." >&2
+    fi
+    usage
+    exit 1
+fi
+
+if [ ! -f "$TARBALL" ]
+then
+    echo "System image tarball not found: $TARBALL" >&2
+    usage
+    exit 1
+fi
+
+if ! tar tf "$TARBALL" >/dev/null 2>&1
+then
+    echo "$TARBALL is not a readable tar archive." >&2
+    echo "Supply the EdgeOS release tarball you downloaded from Ubiquiti." >&2
+    exit 1
+fi
+
+if [ -n "$CONFIG" ] && [ "$CONFIG" != "-" ] && [ ! -f "$CONFIG" ]
+then
+    echo "Config archive not found: $CONFIG" >&2
+    usage
+    exit 1
+fi
+
+if [ -n "$DRIVESIZE" ] && ! [[ "$DRIVESIZE" =~ ^[1-9][0-9]*$ ]]
+then
+    echo "Root end cap size must be a whole number of GB, got: $DRIVESIZE" >&2
+    usage
+    exit 1
+fi
+
 if [ "$OS" = "Darwin" ]
 then
     # macOS mounts partitions under temporary directories; nothing lives at a
     # fixed /mnt path.
     BOOT_MNT=$(mktemp -d)
+    # The ext3 root is never mounted on macOS, so there is no ROOT_MNT to clean.
+    ROOT_MNT=""
 
     # Unmount all volumes on the target disk (tolerate a disk with none mounted).
     diskutil unmountDisk "$DEVICE" || true
@@ -92,9 +172,10 @@ else
     # Unmount all partitions on device
     umount "${DEVICE}"? && echo "Unmounted all partitions on $DEVICE" || echo "no filesystem mounted from $DEVICE"
 
-    # Unmount folders only if already mounted
-    grep -qs "$BOOT_MNT" /proc/mounts && umount $BOOT_MNT
-    grep -qs "$ROOT_MNT" /proc/mounts && umount $ROOT_MNT
+    # Unmount folders only if already mounted ("|| true" so a not-mounted path
+    # isn't treated as a failure by "set -e")
+    grep -qs "$BOOT_MNT" /proc/mounts && umount $BOOT_MNT || true
+    grep -qs "$ROOT_MNT" /proc/mounts && umount $ROOT_MNT || true
 fi
 
 DIR=$(mktemp -d)
@@ -104,7 +185,7 @@ STAGE=$(mktemp -d)
 function cleanup {
     for d in "$DIR" "$STAGE" "$BOOT_MNT" "$ROOT_MNT"
     do
-        if [ -d "$d" ]
+        if [ -n "$d" ] && [ -d "$d" ]
         then
             rm -rf "$d"
         fi
@@ -123,8 +204,8 @@ then
     if [ -n "$DRIVESIZE" ]
     then
         echo "Creating root partition with an end cap size of $DRIVESIZE GB"
-        (( SIZE = DRIVESIZE * 1024 ))
-        (( ROOTMB = SIZE - 150 ))
+        SIZE=$(( DRIVESIZE * 1024 ))
+        ROOTMB=$(( SIZE - 150 ))
         diskutil partitionDisk "$DEVICE" MBR \
             "MS-DOS FAT32" BOOT 150M \
             "MS-DOS FAT32" ROOT "${ROOTMB}M" \
@@ -155,7 +236,7 @@ else
     if [ -n "$DRIVESIZE" ]
     then
         echo "Creating root partition with an end cap size of $DRIVESIZE GB"
-        (( SIZE = DRIVESIZE * 1024 ))
+        SIZE=$(( DRIVESIZE * 1024 ))
         parted --script "$DEVICE" mkpart primary ext3 150MB "${SIZE}"MB
     else
         parted --script "$DEVICE" mkpart primary ext3 150MB 100%
@@ -181,18 +262,26 @@ fi
 echo "Unpacking EdgeOS release image"
 tar xf "$TARBALL" -C "$DIR"
 
+####### Make sure this really was an EdgeOS release tarball
+for f in vmlinux.tmp vmlinux.tmp.md5 squashfs.tmp squashfs.tmp.md5 version.tmp
+do
+    if [ ! -f "$DIR/$f" ]
+    then
+        echo "$TARBALL does not look like an EdgeOS release image ($f is missing)." >&2
+        exit 1
+    fi
+done
+
 ####### Kernel
 echo "Verifying EdgeOS kernel"
-if [ "$(md5sum "$DIR"/vmlinux.tmp | awk -F ' ' '{print $1}')" != \
-     "$(cat "$DIR"/vmlinux.tmp.md5)" ]; then
+if [ "$(md5_of "$DIR"/vmlinux.tmp)" != "$(cat "$DIR"/vmlinux.tmp.md5)" ]; then
     echo "Kernel in image is corrupted! Check your image and start over."
     exit 1
 fi
 
 ####### System
 echo "Verifying EdgeOS system image"
-if [ "$(md5sum "$DIR"/squashfs.tmp | awk -F ' ' '{print $1}')" != \
-     "$(cat "$DIR"/squashfs.tmp.md5)" ]; then
+if [ "$(md5_of "$DIR"/squashfs.tmp)" != "$(cat "$DIR"/squashfs.tmp.md5)" ]; then
     echo "System in image is corrupted! Check your image and start over."
     exit 1
 fi
@@ -226,7 +315,7 @@ then
     echo "Creating ext3 root filesystem"
     # -F: diskutil already put a FAT filesystem here, so skip the interactive
     # "overwrite existing filesystem?" prompt (we are replacing it on purpose).
-    mke2fs -F -t ext3 -q -d "$STAGE" "$DEVICE_ROOT"
+    "$MKE2FS" -F -t ext3 -q -d "$STAGE" "$DEVICE_ROOT"
 
     echo "Copying EdgeOS kernel to boot partition"
     # macOS may have auto-mounted the freshly formatted boot slice; make sure it is
